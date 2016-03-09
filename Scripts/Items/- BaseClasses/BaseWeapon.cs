@@ -35,6 +35,15 @@ namespace Server.Items
 
 	public abstract class BaseWeapon : Item, IWeapon, IFactionItem, ICraftable, ISlayer, IDurability, ISetItem
 	{
+		private static int m_WeaponSwingsPerHp;
+		private static double m_WeaponSwingAcidMod;
+
+		private static void Configure()
+		{
+			m_WeaponSwingsPerHp = Config.Get("Equipment.WeaponSwingsPerHp", 40);
+			m_WeaponSwingAcidMod = Config.Get("Equipment.WeaponSwingAcidMod", 10.0);
+		}
+
 		private string m_EngravedText;
 
 		[CommandProperty(AccessLevel.GameMaster)]
@@ -124,6 +133,9 @@ namespace Server.Items
 		#region SA
 		private SAAbsorptionAttributes m_SAAbsorptionAttributes;
 		#endregion
+
+		// Non-persisted values
+		private int m_HitsFraction = 0;
 
 		// Overridable values. These values are provided to override the defaults which get defined in the individual weapon scripts.
 		private int m_StrReq, m_DexReq, m_IntReq;
@@ -2401,42 +2413,7 @@ namespace Server.Items
 				}
 			}
 
-			if (m_MaxHits > 0 &&
-				((MaxRange <= 1 && (defender is Slime || defender is ToxicElemental || defender is CorrosiveSlime)) || splintering ||
-				 Utility.Random(25) == 0)) // Stratics says 50% chance, seems more like 4%..
-			{
-				if (MaxRange <= 1 && (defender is Slime || defender is ToxicElemental || defender is CorrosiveSlime))
-				{
-					attacker.LocalOverheadMessage(MessageType.Regular, 0x3B2, 500263); // *Acid blood scars your weapon!*
-				}
-
-				if (Core.AOS &&
-					m_AosWeaponAttributes.SelfRepair + (IsSetItem && m_SetEquipped ? m_SetSelfRepair : 0) > Utility.Random(10))
-				{
-					HitPoints += 2;
-				}
-				else
-				{
-					if (m_Hits > 0)
-					{
-						--HitPoints;
-					}
-					else if (m_MaxHits > 1)
-					{
-						--MaxHitPoints;
-
-						if (Parent is Mobile)
-						{
-							((Mobile)Parent).LocalOverheadMessage(MessageType.Regular, 0x3B2, 1061121);
-								// Your equipment is severely damaged.
-						}
-					}
-					else
-					{
-						Delete();
-					}
-				}
-			}
+			HandleDurabilityLoss(attacker, defender);
 
 			if (attacker is VampireBatFamiliar)
 			{
@@ -2598,6 +2575,51 @@ namespace Server.Items
 			}
 
 			XmlAttach.OnWeaponHit(this, attacker, defender, damageGiven);
+		}
+
+		protected virtual void HandleDurabilityLoss(Mobile attacker, Mobile defender)
+		{
+			int damage = 1;
+
+			if (MaxRange <= 1 && (defender is Slime || defender is ToxicElemental || defender is CorrosiveSlime))
+			{
+				attacker.LocalOverheadMessage(MessageType.Regular, 0x3B2, 500263); // *Acid blood scars your weapon!*
+				damage = (int)(damage * m_WeaponSwingAcidMod);
+			}
+
+			if (Utility.Random(4) == 0 && Core.AOS &&
+				m_AosWeaponAttributes.SelfRepair + (IsSetItem && m_SetEquipped ? m_SetSelfRepair : 0) > Utility.Random(10))
+			{
+				HitPoints += 2;
+				return;
+			}
+
+			int wear = 0;
+			m_HitsFraction += damage;
+			while(m_HitsFraction >= m_WeaponSwingsPerHp)
+			{
+				++wear;
+				m_HitsFraction -= m_WeaponSwingsPerHp;
+			}
+
+			if (m_Hits >= wear)
+			{
+				HitPoints -= wear;
+			}
+			else if (m_MaxHits >= wear)
+			{
+				MaxHitPoints -= wear;
+
+				if (Parent is Mobile)
+				{
+					((Mobile)Parent).LocalOverheadMessage(MessageType.Regular, 0x3B2, 1061121);
+						// Your equipment is severely damaged.
+				}
+			}
+			else
+			{
+				Delete();
+			}
 		}
 
 		public virtual double GetAosDamage(Mobile attacker, int bonus, int dice, int sides)

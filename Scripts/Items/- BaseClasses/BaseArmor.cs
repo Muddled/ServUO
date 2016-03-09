@@ -13,6 +13,15 @@ namespace Server.Items
 {
     public abstract class BaseArmor : Item, IScissorable, IFactionItem, ICraftable, IWearableDurability, ISetItem
     {
+		private static int m_ArmorDamagePerHp;
+		private static double m_ArmorDamageMaceMod;
+
+		public static void Configure()
+		{
+			m_ArmorDamagePerHp = Config.Get("Equipment.ArmorDamagePerHp", 100);
+			m_ArmorDamageMaceMod = Config.Get("Equipment.ArmorDamageMaceMod", 4.0);
+		}
+
         #region Factions
         private FactionItem m_FactionState;
 
@@ -59,6 +68,9 @@ namespace Server.Items
         private CraftResource m_Resource;
         private bool m_Identified, m_PlayerConstructed;
         private int m_PhysicalBonus, m_FireBonus, m_ColdBonus, m_PoisonBonus, m_EnergyBonus;
+
+		// Non-persistent instance values
+		private int m_HitPointFraction = 0;
 
         #region Runic Reforging
         private bool m_BlockRepair;
@@ -2213,48 +2225,50 @@ namespace Server.Items
             if (Absorbed < 2)
                 Absorbed = 2;
 
-            if (25 > Utility.Random(100)) // 25% chance to lower durability
+            if (Utility.Random(4) == 0 && Core.AOS && this.m_AosArmorAttributes.SelfRepair + (this.IsSetItem && this.m_SetEquipped ? this.m_SetSelfRepair : 0) > Utility.Random(10))
             {
-                if (Core.AOS && this.m_AosArmorAttributes.SelfRepair + (this.IsSetItem && this.m_SetEquipped ? this.m_SetSelfRepair : 0) > Utility.Random(10))
+                this.HitPoints += 2;
+				return damageTaken;
+            }
+
+			int wear = 0;
+			int hpDmg = damageTaken;
+
+			if (weapon.Type == WeaponType.Bashing)
+				hpDmg = (int)(hpDmg * m_ArmorDamageMaceMod);
+			m_HitPointFraction += hpDmg;
+
+			while (m_HitPointFraction >= m_ArmorDamagePerHp)
+			{
+				++wear;
+				m_HitPoints -= m_HitPointFraction;
+			}
+
+            if (wear > 0 && this.m_MaxHitPoints > 0)
+            {
+                if (this.m_HitPoints >= wear)
                 {
-                    this.HitPoints += 2;
+                    this.HitPoints -= wear;
+                    wear = 0;
                 }
                 else
                 {
-                    int wear;
+                    wear -= this.HitPoints;
+                    this.HitPoints = 0;
+                }
 
-                    if (weapon.Type == WeaponType.Bashing)
-                        wear = Absorbed / 2;
-                    else
-                        wear = Utility.Random(2);
-
-                    if (wear > 0 && this.m_MaxHitPoints > 0)
+                if (wear > 0)
+                {
+                    if (this.m_MaxHitPoints > wear)
                     {
-                        if (this.m_HitPoints >= wear)
-                        {
-                            this.HitPoints -= wear;
-                            wear = 0;
-                        }
-                        else
-                        {
-                            wear -= this.HitPoints;
-                            this.HitPoints = 0;
-                        }
+                        this.MaxHitPoints -= wear;
 
-                        if (wear > 0)
-                        {
-                            if (this.m_MaxHitPoints > wear)
-                            {
-                                this.MaxHitPoints -= wear;
-
-                                if (this.Parent is Mobile)
-                                    ((Mobile)this.Parent).LocalOverheadMessage(MessageType.Regular, 0x3B2, 1061121); // Your equipment is severely damaged.
-                            }
-                            else
-                            {
-                                this.Delete();
-                            }
-                        }
+                        if (this.Parent is Mobile)
+                            ((Mobile)this.Parent).LocalOverheadMessage(MessageType.Regular, 0x3B2, 1061121); // Your equipment is severely damaged.
+                    }
+                    else
+                    {
+                        this.Delete();
                     }
                 }
             }
